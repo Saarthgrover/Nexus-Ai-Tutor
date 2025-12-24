@@ -1,0 +1,168 @@
+import streamlit as st
+import openai
+import os
+from PyPDF2 import PdfReader
+
+# --- 1. SETUP & CONFIGURATION ---
+st.set_page_config(page_title="Nexus Pro: AI Tutor", page_icon="🎓", layout="wide")
+
+# API KEY
+openai.api_key = os.getenv("OPENAI_API_KEY")
+
+# --- 2. HELPER FUNCTIONS ---
+def get_pdf_text(pdf_file):
+    """Extracts text from an uploaded PDF."""
+    text = ""
+    pdf_reader = PdfReader(pdf_file)
+    for page in pdf_reader.pages:
+        text += page.extract_text()
+    return text
+
+def convert_chat_to_text(messages):
+    """Converts the chat history into a downloadable text string."""
+    chat_str = "--- NEXUS AI STUDY SESSION ---\n\n"
+    for msg in messages:
+        role = "STUDENT" if msg["role"] == "user" else "AI TUTOR"
+        chat_str += f"[{role}]:\n{msg['content']}\n\n"
+        chat_str += "-" * 30 + "\n\n"
+    return chat_str
+
+def generate_quiz(text, num_questions=3):
+    """Asks the AI to generate a quiz based on the text."""
+    quiz_prompt = f"""
+    Based on the following notes, generate a {num_questions}-question multiple-choice quiz.
+    Format:
+    1. Question
+    a) Option
+    b) Option...
+    
+    At the end, provide the Answer Key.
+    
+    NOTES CONTENT:
+    {text[:3000]} 
+    """
+    try:
+        response = openai.ChatCompletion.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "You are a teacher creating a test."},
+                {"role": "user", "content": quiz_prompt}
+            ]
+        )
+        return response.choices[0].message.content
+    except Exception as e:
+        return f"Error generating quiz: {e}"
+
+# --- 3. SIDEBAR CONTROLS ---
+with st.sidebar:
+    st.title("⚙️ Control Panel")
+    
+    # Subject Selection
+    subject = st.selectbox(
+        "Select Subject:",
+        ["General", "Math 🧮", "Science 🧬", "History 🏛️", "English 📚"]
+    )
+    
+    st.write("---")
+    uploaded_file = st.file_uploader("Upload Notes (PDF)", type=['pdf'])
+    
+    st.write("---")
+    
+    # Feature: Quiz Generator
+    if uploaded_file and st.session_state.get('file_context'):
+        st.subheader("📝 Tools")
+        if st.button("Generate Quiz from Notes"):
+            with st.spinner("Creating your quiz..."):
+                quiz_content = generate_quiz(st.session_state.file_context)
+                st.session_state.current_quiz = quiz_content
+    
+    st.write("---")
+    
+    # Feature: Download Chat (NEW!)
+    if st.session_state.get("messages"):
+        st.subheader("💾 Save Session")
+        chat_text = convert_chat_to_text(st.session_state.messages)
+        st.download_button(
+            label="Download Study Notes (.txt)",
+            data=chat_text,
+            file_name="nexus_study_session.txt",
+            mime="text/plain"
+        )
+
+    # Clear Chat
+    if st.button("Clear Chat"):
+        st.session_state.messages = []
+        st.session_state.current_quiz = ""
+        st.rerun()
+
+# --- 4. STATE MANAGEMENT ---
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "file_context" not in st.session_state:
+    st.session_state.file_context = ""
+if "current_quiz" not in st.session_state:
+    st.session_state.current_quiz = ""
+
+# Process PDF if uploaded
+if uploaded_file and not st.session_state.file_context:
+    with st.spinner("Analyzing PDF..."):
+        text = get_pdf_text(uploaded_file)
+        st.session_state.file_context = text
+        st.success("File Processed!")
+
+# --- 5. DEFINE AI PERSONALITY ---
+base_prompt = "You are Nexus, an AI Tutor."
+if "Math" in subject:
+    base_prompt += " You are a Math expert. ALWAYS use LaTeX formatting for equations. Focus on logic."
+elif "Science" in subject:
+    base_prompt += " You are a Science expert. Use analogies."
+elif "History" in subject:
+    base_prompt += " You are a Historian. Focus on timelines and cause-and-effect."
+
+if st.session_state.file_context:
+    system_prompt = f"{base_prompt}\n\nCONTEXT FROM NOTES: {st.session_state.file_context}"
+else:
+    system_prompt = base_prompt
+
+# --- 6. MAIN INTERFACE ---
+st.title(f"🎓 Nexus Pro: {subject} Mode")
+
+tab1, tab2 = st.tabs(["💬 Chat Tutor", "📝 Quiz Zone"])
+
+with tab1:
+    for message in st.session_state.messages:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    if prompt := st.chat_input("Ask a question..."):
+        st.session_state.messages.append({"role": "user", "content": prompt})
+        with st.chat_message("user"):
+            st.markdown(prompt)
+
+        with st.chat_message("assistant"):
+            message_placeholder = st.empty()
+            full_response = ""
+            
+            try:
+                for chunk in openai.ChatCompletion.create(
+                    model="gpt-3.5-turbo",
+                    messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages[-5:],
+                    stream=True,
+                ):
+                    content = chunk.choices[0].delta.get("content", "")
+                    full_response += content
+                    message_placeholder.markdown(full_response + "▌")
+                message_placeholder.markdown(full_response)
+            except Exception as e:
+                st.error(f"Error: {e}")
+                full_response = "Error connecting to AI."
+            
+            st.session_state.messages.append({"role": "assistant", "content": full_response})
+
+with tab2:
+    st.header("Exam Prep")
+    if st.session_state.current_quiz:
+        st.info("Here is a practice test based on your notes.")
+        st.markdown(st.session_state.current_quiz)
+    else:
+        st.write("Upload a PDF and click 'Generate Quiz' in the sidebar.")
