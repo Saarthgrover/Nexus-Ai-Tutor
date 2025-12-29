@@ -141,18 +141,25 @@ def main() -> None:
                     full_response = "OpenAI API key not configured. Please set OPENAI_API_KEY to enable responses."
                     message_placeholder.markdown(full_response)
                 else:
-                    stream = client.chat.completions.create(
-                        model="gpt-4o-mini",
-                        messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages[-5:],
-                        stream=True,
-                    )
-                    for chunk in stream:
-                        delta = getattr(chunk.choices[0], "delta", None)
-                        if delta and getattr(delta, "content", None):
-                            full_response += delta.content
-                            message_placeholder.markdown(full_response + "▌")
+                    try:
+                        stream = client.chat.completions.create(
+                            model="gpt-4o-mini",
+                            messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages[-5:],
+                            stream=True,
+                        )
+                        for chunk in stream:
+                            delta = getattr(chunk.choices[0], "delta", None)
+                            if delta and getattr(delta, "content", None):
+                                full_response += delta.content
+                                message_placeholder.markdown(full_response + "▌")
 
-                    message_placeholder.markdown(full_response)
+                        message_placeholder.markdown(full_response)
+                    except Exception as e:
+                        err_msg = f"OpenAI API error: {e}"
+                        full_response = err_msg
+                        message_placeholder.markdown(full_response)
+                        st.error("OpenAI request failed — check your API key, network, and quota. See details below.")
+                        st.exception(e)
 
                 # Generate and play Audio (TTS)
                 with st.spinner("Nexus is speaking..."):
