@@ -16,7 +16,15 @@ except Exception:
 
 def main() -> None:
     # --- 1. SETUP & CONFIGURATION ---
-    api_key = os.getenv("OPENAI_API_KEY")
+    # Prefer Streamlit secrets, then environment variable
+    api_key = None
+    try:
+        api_key = st.secrets.get("OPENAI_API_KEY")
+    except Exception:
+        api_key = None
+    if not api_key:
+        api_key = os.getenv("OPENAI_API_KEY")
+
     client = None
     if api_key:
         try:
@@ -27,7 +35,7 @@ def main() -> None:
     st.set_page_config(page_title="Nexus Pro: AI Tutor", page_icon="🎓", layout="wide")
 
     if client is None:
-        st.warning("OpenAI API key not found. Features requiring OpenAI will be disabled.\nSet the OPENAI_API_KEY environment variable to enable them.")
+        st.warning("OpenAI API key not found. Features requiring OpenAI will be disabled.\nSet the OPENAI_API_KEY environment variable or add OPENAI_API_KEY to .streamlit/secrets.toml to enable them.")
 
     # --- 2. AUDIO HELPER ---
     def speak_text(text: str) -> str:
