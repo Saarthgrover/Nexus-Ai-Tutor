@@ -16,13 +16,24 @@ except Exception:
 
 def main() -> None:
     # --- 1. SETUP & CONFIGURATION ---
-    client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+    api_key = os.getenv("OPENAI_API_KEY")
+    client = None
+    if api_key:
+        try:
+            client = OpenAI(api_key=api_key)
+        except Exception:
+            client = None
 
     st.set_page_config(page_title="Nexus Pro: AI Tutor", page_icon="🎓", layout="wide")
+
+    if client is None:
+        st.warning("OpenAI API key not found. Features requiring OpenAI will be disabled.\nSet the OPENAI_API_KEY environment variable to enable them.")
 
     # --- 2. AUDIO HELPER ---
     def speak_text(text: str) -> str:
         """Converts text to speech using OpenAI TTS and returns a base64 HTML audio tag."""
+        if client is None:
+            return ""
         try:
             response = client.audio.speech.create(
                 model="tts-1",
@@ -118,18 +129,22 @@ def main() -> None:
                 full_response = ""
 
                 # Stream the text response
-                stream = client.chat.completions.create(
-                    model="gpt-4o-mini",
-                    messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages[-5:],
-                    stream=True,
-                )
-                for chunk in stream:
-                    delta = getattr(chunk.choices[0], "delta", None)
-                    if delta and getattr(delta, "content", None):
-                        full_response += delta.content
-                        message_placeholder.markdown(full_response + "▌")
+                if client is None:
+                    full_response = "OpenAI API key not configured. Please set OPENAI_API_KEY to enable responses."
+                    message_placeholder.markdown(full_response)
+                else:
+                    stream = client.chat.completions.create(
+                        model="gpt-4o-mini",
+                        messages=[{"role": "system", "content": system_prompt}] + st.session_state.messages[-5:],
+                        stream=True,
+                    )
+                    for chunk in stream:
+                        delta = getattr(chunk.choices[0], "delta", None)
+                        if delta and getattr(delta, "content", None):
+                            full_response += delta.content
+                            message_placeholder.markdown(full_response + "▌")
 
-                message_placeholder.markdown(full_response)
+                    message_placeholder.markdown(full_response)
 
                 # Generate and play Audio (TTS)
                 with st.spinner("Nexus is speaking..."):
