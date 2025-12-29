@@ -148,9 +148,7 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    ctx = get_script_run_ctx()
-    if ctx is None:
-        print("This app must be run with 'streamlit run app.py'. Exiting to avoid 'missing ScriptRunContext' warnings.")
-        sys.exit(0)
+    # Allow Streamlit to run the app even if ScriptRunContext isn't detected
+    # This avoids false positives where the context import/path can't be resolved
     main()
 
