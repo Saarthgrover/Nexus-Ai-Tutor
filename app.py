@@ -141,6 +141,47 @@ def main() -> None:
         except Exception as e:
             return f"OpenAI error during summarization: {e}"
 
+    def try_responses_image_analysis(image_bytes: bytes) -> tuple[str | None, str | None]:
+        """Attempt to analyze an image using the OpenAI Responses API if available.
+        Returns (analysis_text, error_message)."""
+        if client is None:
+            return None, "OpenAI client not configured"
+        # Check for responses API support
+        if not hasattr(client, "responses"):
+            return None, "Responses API not available in OpenAI client"
+        try:
+            b64 = base64.b64encode(image_bytes).decode()
+            prompt = (
+                "You will be provided an image encoded as base64. "
+                "Provide a concise description, list key elements, interpret any text visible, and suggest action items. "
+                "Do not try to decode the full base64 here if you cannot; explain limitations if necessary.\n\n"
+                f"Image (base64 prefix): {b64[:200]}..."
+            )
+            resp = client.responses.create(model=model_name, input=prompt)
+            # Try common response shapes
+            if hasattr(resp, "output_text") and resp.output_text:
+                return resp.output_text, None
+            # Fallback parsing
+            out = ""
+            if hasattr(resp, "output") and resp.output:
+                try:
+                    for item in resp.output:
+                        if isinstance(item, dict) and "content" in item:
+                            for c in item["content"]:
+                                if isinstance(c, dict) and c.get("type") == "output_text":
+                                    out += c.get("text", "")
+                                elif isinstance(c, str):
+                                    out += c
+                        elif isinstance(item, str):
+                            out += item
+                except Exception:
+                    out = str(resp)
+            if out:
+                return out, None
+            return str(resp), None
+        except Exception as e:
+            return None, str(e)
+
     # --- 4. STATE MANAGEMENT ---
     if "messages" not in st.session_state:
         st.session_state.messages = []
@@ -291,40 +332,46 @@ def main() -> None:
                             st.markdown("**Image summary (from extracted text):**")
                             st.write(summary)
                         else:
-                            # fallback: attempt OpenAI vision/description if supported
+                            # fallback: prefer Responses API if available, then chat fallback
                             if client is None:
                                 st.error("OpenAI client not configured — cannot perform image summarization.")
                             else:
-                                try:
-                                    # Try to send the image bytes embedded as base64 to the model via a text prompt.
-                                    b64 = base64.b64encode(image_bytes).decode()
-                                    user_msg = (
-                                        "You will be provided an image encoded as base64. "
-                                        "Provide a concise description and summary of the image, list key elements and any actionable items. "
-                                        "If the base64 cannot be decoded, explain that you couldn't analyze the image.\n\n"
-                                        f"Image (base64): data:image/png;base64,{b64[:200]}..."
-                                    )
-                                    resp = client.chat.completions.create(
-                                        model=model_name,
-                                        messages=[
-                                            {"role": "system", "content": "You are an assistant that can interpret images provided as base64 strings and summarise their content."},
-                                            {"role": "user", "content": user_msg},
-                                        ],
-                                        max_tokens=min(512, max_tokens),
-                                        temperature=0.2,
-                                    )
-                                    content = getattr(resp.choices[0], "message", None)
-                                    if content is None:
-                                        content = getattr(resp.choices[0], "text", "")
-                                    if isinstance(content, dict):
-                                        analysis = content.get("content", "").strip()
-                                    else:
-                                        analysis = str(content)
-                                    st.markdown("**Image summary (OpenAI analysis):**")
+                                # Try Responses API first
+                                analysis, err = try_responses_image_analysis(image_bytes)
+                                if err is None and analysis:
+                                    st.markdown("**Image summary (Responses API):**")
                                     st.write(analysis)
-                                except Exception as e:
-                                    st.error("OpenAI visual analysis failed")
-                                    st.exception(e)
+                                else:
+                                    # Try chat-based base64 fallback
+                                    try:
+                                        b64 = base64.b64encode(image_bytes).decode()
+                                        user_msg = (
+                                            "You will be provided an image encoded as base64. "
+                                            "Provide a concise description and summary of the image, list key elements and any actionable items. "
+                                            "If the base64 cannot be decoded, explain that you couldn't analyze the image.\n\n"
+                                            f"Image (base64): data:image/png;base64,{b64[:200]}..."
+                                        )
+                                        resp = client.chat.completions.create(
+                                            model=model_name,
+                                            messages=[
+                                                {"role": "system", "content": "You are an assistant that can interpret images provided as base64 strings and summarise their content."},
+                                                {"role": "user", "content": user_msg},
+                                            ],
+                                            max_tokens=min(512, max_tokens),
+                                            temperature=0.2,
+                                        )
+                                        content = getattr(resp.choices[0], "message", None)
+                                        if content is None:
+                                            content = getattr(resp.choices[0], "text", "")
+                                        if isinstance(content, dict):
+                                            analysis = content.get("content", "").strip()
+                                        else:
+                                            analysis = str(content)
+                                        st.markdown("**Image summary (OpenAI analysis):**")
+                                        st.write(analysis)
+                                    except Exception as e:
+                                        st.error("OpenAI visual analysis failed")
+                                        st.exception(e)
             except Exception as e:
                 st.error("Failed to process uploaded image.")
                 st.exception(e)
